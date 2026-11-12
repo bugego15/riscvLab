@@ -1,7 +1,7 @@
 # riscvLab — RISC-V 启动流程学习实验
 
 在 QEMU `-M virt` 上学习 RISC-V 启动流程的代码仓库。按"五阶段启动链"组织，当前已上传
-**第一 ~ 五阶段**，以及 **M3 内存管理 / M4 进程管理** 实验（`lab/`）。
+**第一 ~ 五阶段**、**M3 内存管理 / M4 进程管理** 实验（`lab/`），以及原理/测试文档（`docs/`）。
 
 ## 五阶段启动链
 
@@ -86,6 +86,18 @@ S 模式二级 loader，本仓库用 **U-Boot v2025.10**：
 `lab/` 是共享实验框架：一个 BusyBox initramfs + 内核模块 + 静态测试程序，按内核 cmdline
 `lab.mode=<mode>` 分发到不同实验脚本。模式：`meminit` / `pgwalk` / `buddy` / `slab` /
 `slubdebug` / `proc`。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| `docs/00-principles-and-testing.md` | **主手册**：启动全流程原理 + 各阶段测试方法/判读 |
+| `docs/01-boot-flow.md` | 五阶段启动链总览 |
+| `docs/02-uboot-ota.md` | U-Boot 磁盘启动、分区、A/B OTA 与回滚 |
+| `docs/03-memory.md` | memblock → 页表 → buddy → SLUB → slub_debug |
+| `docs/04-process.md` | task_struct / fork-exec / 调度 / COW |
+| `docs/05-summary.md` | 总结与经验 |
+| `docs/README.md` | 文档索引与说明 |
 
 ## 环境要求
 
@@ -206,10 +218,13 @@ riscvLab/
 ├─ 01-boot-chain/
 │  ├─ 00-rom/                   第一阶段：复位后的第一段代码
 │  ├─ 01-opensbi/               第二阶段：M 模式固件 OpenSBI
+│  ├─ 02-uboot-m/               第三阶段变体：M 模式 U-Boot（无 OpenSBI）
 │  ├─ 03-uboot-s/               第三阶段：S 模式 U-Boot（构建/运行/GDB 重定位观察）
+│  ├─ 04-spl/                   第三阶段变体：SPL 两段式引导
 │  ├─ 05-kernel/                第四阶段：内核构建、启动与入口观察
 │  └─ 06-init/                  第五阶段：initramfs /init
 ├─ 02-uboot-ota/                磁盘启动 + A/B OTA（分区/槽位/回滚/env 持久化）
+├─ docs/                        原理与测试手册（建议先读 docs/00）
 ├─ lab/                         M3 内存管理 + M4 进程管理实验（模块/测试/overlay）
 └─ scripts/
    ├─ common.sh                 公共路径/版本变量

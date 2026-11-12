@@ -1,0 +1,29 @@
+# 版本锁定（M1 完成时实测）
+WSL_DISTRO=Ubuntu-24.04
+QEMU_WSL=8.2.2 (apt: qemu-system-misc, Debian 1:8.2.2+ds-0ubuntu1.18)
+QEMU_WINDOWS=11.1.0 (仅交叉验证)
+CROSS_GCC=riscv64-linux-gnu-gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1)
+GDB=gdb-multiarch 15.1
+KERNEL=6.12.117 (Image 25MB, vmlinux 288MB 含 debug_info)
+OPENSBI=1.7 源码构建 (fw_dynamic/fw_jump 267KB, elf 1.7MB)
+UBOOT=2025.10 源码构建自 source.denx.de tag v2025.10
+  - M 模式: qemu-riscv64_defconfig → u-boot-m.bin (1.2MB)
+  - S 模式: qemu-riscv64_smode_defconfig + 02-uboot-ota/uboot-fragment.config → u-boot-s.bin (1.2MB)
+  - SPL: qemu-riscv64_spl_defconfig + OPENSBI=fw_dynamic.bin → u-boot-spl.bin (46KB) + u-boot.itb (1.2MB)
+BUSYBOX=1.37.0 源码交叉编译，静态链接
+BUILD_ROOT_WSL=/home/<user>/riscv-lab
+ARTIFACTS=本地结果目录（由实验脚本生成，不在仓库里）
+
+# M2 追加
+AB_DISK=256MiB GPT (p1 FAT 64MiB boot.scr+双槽FIT+uboot.env; p2/p3 ext4 48MiB rootfs_a/b; p4 ext4 32MiB data)
+FIT=未压缩 kernel(Image)+QEMU virt DTB+sha256（gzip FIT 启动挂起，见 docs/02）
+DATA_FS=ext4 with -O ^metadata_csum,^metadata_csum_seed,^64bit,^orphan_file（U-Boot ext4write 需要）
+UBOOT_ENV=CONFIG_ENV_IS_IN_FAT + 禁用 CONFIG_ENV_IS_NOWHERE（否则 saveenv 无法落盘）
+
+# M3/M4 追加（lab 实验框架）
+LAB_FRAMEWORK=lab/ (mods + tests + overlay + build-lab.sh/mk-lab-initramfs.sh/run-lab.sh)
+LAB_MODS=buddy_demo slab_demo pgwalk_demo task_walk slub_debug_demo（外部模块，针对 6.12.117-riscv-lab）
+LAB_INITRAMFS=BusyBox 1.37.0 + 模块 + 静态测试程序 + /init（按 cmdline lab.mode= 分发）
+LAB_MODES=meminit pgwalk buddy slab slubdebug proc
+PAGE_TABLE=运行时 Sv57（5 级）；satp 根 = __pa(mm->pgd)
+ACTIVE_PAGE_TABLE_LEVELS=5（CONFIG_PGTABLE_LEVELS=5，Sv39/48/57 运行时选择）
