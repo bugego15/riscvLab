@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M1-A0：运行“自写 stage0 -> OpenSBI -> 自写 stage1”链条，抓串口日志
-# 用法：wsl -d Ubuntu-24.04 -e bash /mnt/d/1212D/riscv-boot-lab/01-boot-chain/00-rom/run-stage0.sh
+# 用法：wsl -d Ubuntu-24.04 -e bash 01-boot-chain/00-rom/run-stage0.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=/dev/null

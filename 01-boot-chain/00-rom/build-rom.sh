@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M1-A0：构建自写 stage0/stage1 + 定制加载地址的 OpenSBI fw_jump
-# 用法：wsl -d Ubuntu-24.04 -e bash /mnt/d/1212D/riscv-boot-lab/01-boot-chain/00-rom/build-rom.sh
+# 用法：wsl -d Ubuntu-24.04 -e bash 01-boot-chain/00-rom/build-rom.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=/dev/null
