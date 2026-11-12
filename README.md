@@ -1,13 +1,13 @@
 # riscvLab — RISC-V 启动流程学习实验
 
-在 QEMU `-M virt` 上学习 RISC-V 启动流程的代码仓库。按"五阶段启动链"组织，当前已上传 **第一阶段**。
+在 QEMU `-M virt` 上学习 RISC-V 启动流程的代码仓库。按"五阶段启动链"组织，当前已上传 **第一、二阶段**。
 
 ## 五阶段启动链
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **1** | 复位后第一段代码（真机 BootROM / 本仓库自写 stage0） | ✅ 已上传（`01-boot-chain/00-rom/`） |
-| 2 | M 模式固件（SBI 提供者，OpenSBI） | 后续 |
+| **1** | 复位后第一段代码（真机 BootROM / 自写 stage0） | ✅ `01-boot-chain/00-rom/` |
+| **2** | M 模式固件（SBI 提供者：OpenSBI） | ✅ `01-boot-chain/01-opensbi/` |
 | 3 | 二级 loader（U-Boot / SPL） | 后续 |
 | 4 | 内核加载协议（booti / FIT / QEMU -kernel） | 后续 |
 | 5 | 应用层 init（initramfs / rootfs） | 后续 |
@@ -29,16 +29,31 @@ QEMU `virt` 复位后 `PC = 0x1000`，执行 6 条复位向量指令，然后跳
 真机上这个位置是 **BootROM**；QEMU 上只是"取 hartid/DTB/入口并跳转"的最小桩。
 本仓库用两段自写代码补出"扩展版第一阶段"：
 
-1. **`stage0.S` + `stage0.c`（M 模式，第一阶段主体）**：建栈、保存 a0/a1、轮询 16550 UART 打印、校验 DTB magic，然后把 hartid/DTB 原样传给 OpenSBI 并跳转；
-2. **`stage1.S` + `stage1.c`（S 模式，验证 payload）**：通过 SBI `ecall` 打印 SBI 规范版本/实现版本，证明 OpenSBI 已经就位。
+1. **`stage0.S` + `stage0.c`（M 模式）**：建栈、保存 a0/a1、轮询 16550 UART 打印、校验 DTB magic，然后把 hartid/DTB 原样传给 OpenSBI 并跳转；
+2. **`stage1.S` + `stage1.c`（S 模式）**：通过 SBI `ecall` 打印 SBI 规范版本/实现版本，证明 OpenSBI 已经就位。
+
+## 第二阶段做什么
+
+第二阶段是 **0x80000000 处的 M 模式固件（SBI 提供者）**，本仓库用 **OpenSBI v1.7**：
+
+- 保存启动参数（hartid / DTB / fw_dynamic_info）；
+- 自身初始化（scratch、栈、heap、BSS、重定位）；
+- 平台发现（解析 DTB，识别 `riscv-virtio,qemu`）；
+- 最小平台设施：UART console、定时器、IPI、复位/关机、PMU；
+- **PMP/Domain 隔离**（保护固件内存、给 S/U 划权限）与中断/异常委托；
+- 建立 **SBI 运行时**（trap handler + TIME/IPI/RFENCE/HSM/SRST/DBCN… 扩展）；
+- 确定下一级地址/模式，执行 `mret` 从 M 切到 S 模式（`mstatus.MPP=S`、`mepc=next_addr`）。
+
+`fw_dynamic` / `fw_jump` / `fw_payload` 是同一核心的不同打包/入口方式；OpenSBI 在系统运行期间
+**常驻 M 模式**，S 模式的 SBI `ecall` 都回到它处理。
 
 完整启动链：
 
 ```
 QEMU 复位向量(0x1000)
   → stage0 (M, 0x80000000)      自写"BootROM 替身"
-  → OpenSBI (M, 0x80200000)     定制 FW_TEXT_START/FW_JUMP_ADDR
-  → stage1 (S, 0x80400000)      自写 S 模式 payload（通过 SBI 打印）
+  → OpenSBI (M, 0x80000000)     SBI 提供者/安全边界
+  → S 模式 payload (0x80200000) 演示第二阶段交接（也可换成 U-Boot/内核）
 ```
 
 ## 环境要求
@@ -60,23 +75,25 @@ sudo apt install -y qemu-system-misc gcc-riscv64-linux-gnu gdb-multiarch make gi
 git clone https://github.com/bugego15/riscvLab.git
 cd riscvLab
 
-# 1) 下载 OpenSBI v1.7 源码（gitee 镜像）
+# 0) 下载 OpenSBI v1.7 源码（gitee 镜像）
 bash scripts/fetch-opensbi.sh
 
-# 2) 编译 stage0/stage1 + 定制 OpenSBI
+# ===== 第一阶段：复位后第一段代码 =====
 bash 01-boot-chain/00-rom/build-rom.sh
-
-# 3) 运行（QEMU 约 20 秒后自动结束）
 bash 01-boot-chain/00-rom/run-stage0.sh
+bash 01-boot-chain/00-rom/gdb-stage0.sh      # 可选：GDB 逐级单步
 
-# 4) 可选：GDB 逐级单步（复位向量 → stage0 → OpenSBI → stage1）
-bash 01-boot-chain/00-rom/gdb-stage0.sh
+# ===== 第二阶段：M 模式固件 OpenSBI =====
+bash 01-boot-chain/01-opensbi/build-opensbi.sh
+bash 01-boot-chain/01-opensbi/build-payload.sh
+bash 01-boot-chain/01-opensbi/run-opensbi.sh
+bash 01-boot-chain/01-opensbi/gdb-handoff.sh # 可选：看 M→S 交接时刻
 ```
 
 > 如果所在网络访问 GitHub 受限（例如 WSL 内直连被墙），可以用 gh-proxy 镜像克隆：
 > `git clone https://gh-proxy.com/https://github.com/bugego15/riscvLab.git`
 
-### 预期输出（关键行）
+### 预期输出（第一阶段关键行）
 
 ```
 [stage0] self-written first-stage code (BootROM substitute)
@@ -90,10 +107,21 @@ Domain0 Next Address        : 0x0000000080400000
 Domain0 Next Mode           : S-mode
 [stage1] SBI spec version = 0x0000000003000000
 [stage1] SBI impl id      = 0x0000000000000001
-[stage1] SBI impl version = 0x0000000010007
+[stage1] SBI impl version = 0x0000000000010007
 ```
 
-日志会同时写到 `~/riscv-lab/logs/m1-a0-stage0-opensbi-stage1.log`。
+### 预期输出（第二阶段关键行）
+
+```
+OpenSBI v1.7
+Platform Name               : riscv-virtio,qemu
+Firmware Base               : 0x80000000
+Runtime SBI Version         : 3.0
+Domain0 Next Address        : 0x0000000080200000
+Domain0 Next Arg1           : 0x000000009fe00000
+Domain0 Next Mode           : S-mode
+[stage1] SBI spec version = 0x0000000003000000
+```
 
 ## 目录结构
 
@@ -101,14 +129,20 @@ Domain0 Next Mode           : S-mode
 riscvLab/
 ├─ README.md
 ├─ 01-boot-chain/
-│  └─ 00-rom/                 第一阶段：复位后的第一段代码
-│     ├─ stage0.S / stage0.c   M 模式 stage0（BootROM 替身）
-│     ├─ stage0.ld             链接脚本（0x80000000）
-│     ├─ stage1.S / stage1.c   S 模式验证 payload
-│     ├─ stage1.ld             链接脚本（0x80400000）
-│     ├─ build-rom.sh          编译 stage0/stage1 + 定制地址的 OpenSBI
-│     ├─ run-stage0.sh         一键运行并抓串口日志
-│     └─ gdb-stage0.sh         GDB 逐级单步（复位→stage0→OpenSBI→stage1）
+│  ├─ 00-rom/                 第一阶段：复位后的第一段代码
+│  │  ├─ stage0.S / stage0.c   M 模式 stage0（BootROM 替身）
+│  │  ├─ stage0.ld             链接脚本（0x80000000）
+│  │  ├─ stage1.S / stage1.c   S 模式验证 payload
+│  │  ├─ stage1.ld             链接脚本（0x80400000）
+│  │  ├─ build-rom.sh          编译 stage0/stage1 + 定制地址的 OpenSBI
+│  │  ├─ run-stage0.sh         一键运行并抓串口日志
+│  │  └─ gdb-stage0.sh         GDB 逐级单步（复位→stage0→OpenSBI→stage1）
+│  └─ 01-opensbi/             第二阶段：M 模式固件 OpenSBI
+│     ├─ build-opensbi.sh      源码构建 OpenSBI（fw_dynamic/fw_jump）
+│     ├─ build-payload.sh      编译演示 payload（复用 00-rom/stage1.S/.c，链接到 0x80200000）
+│     ├─ payload-0x80200000.ld 演示 payload 链接脚本
+│     ├─ run-opensbi.sh        运行 OpenSBI + payload，抓日志
+│     └─ gdb-handoff.sh        GDB 观察 M→S 交接（switch_mode / mret）
 └─ scripts/
    ├─ common.sh                公共路径/版本变量
    └─ fetch-opensbi.sh         下载 OpenSBI v1.7 源码
@@ -117,5 +151,5 @@ riscvLab/
 ## 说明
 
 - 所有实验都在 QEMU `-M virt` 上完成，不依赖真实硬件。
-- 本仓库是完整学习实验（启动链 / 分区 OTA / 内存 / 进程）的**第一阶段摘录**，后续阶段会陆续上传。
+- 本仓库是完整学习实验（启动链 / 分区 OTA / 内存 / 进程）的**第一、二阶段摘录**，后续阶段会陆续上传。
 - 脚本默认把源码放在 `~/riscv-lab/src`、构建产物放在 `~/riscv-lab/build`，可用 `BUILD_ROOT` 环境变量改到其他目录。
