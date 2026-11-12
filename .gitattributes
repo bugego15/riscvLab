@@ -1,0 +1,8 @@
+# 统一换行：仓库内文本文件用 LF（避免 Windows 下 checkout 成 CRLF 导致脚本/源文件异常）
+* text=auto
+*.sh   text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.S    text eol=lf
+*.ld   text eol=lf
+*.md   text eol=lf

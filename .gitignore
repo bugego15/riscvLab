@@ -1,0 +1,11 @@
+# 编译产物（默认生成在 BUILD_ROOT=~/riscv-lab，不在仓库内）
+*.o
+*.elf
+*.bin
+*.img
+*.cpio
+*.cpio.gz
+*.log
+build/
+images/
+logs/
