@@ -1,0 +1,32 @@
+#!/bin/busybox sh
+# lab initramfs 的 PID 1：挂载伪文件系统，按内核 cmdline 的 lab.mode= 执行对应实验脚本，然后关机
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/root
+
+mount -t proc proc /proc 2>/dev/null
+mount -t sysfs sysfs /sys 2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /sys/kernel/debug /sys/kernel/tracing
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null
+
+echo "=================================================="
+echo "[lab] PID 1 /init running (BusyBox initramfs)"
+echo "[lab] cmdline:"
+cat /proc/cmdline
+echo "=================================================="
+
+MODE=$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^lab\.mode=//p' | head -1)
+echo "[lab] LAB MODE = ${MODE:-<unset>}"
+
+if [ -n "$MODE" ] && [ -x "/root/lab/run-${MODE}.sh" ]; then
+	"/root/lab/run-${MODE}.sh"
+else
+	echo "[lab] no runner for mode '${MODE}', dropping to shell"
+	exec /bin/sh
+fi
+
+sync
+echo "[lab] LAB DONE: ${MODE}"
+poweroff -f
+sleep 10

@@ -1,7 +1,7 @@
 # riscvLab — RISC-V 启动流程学习实验
 
 在 QEMU `-M virt` 上学习 RISC-V 启动流程的代码仓库。按"五阶段启动链"组织，当前已上传
-**第一 ~ 四阶段**，第五阶段（应用层 init）已开始（initramfs `/init` 已跑通）。
+**第一 ~ 五阶段**，以及 **M3 内存管理 / M4 进程管理** 实验（`lab/`）。
 
 ## 五阶段启动链
 
@@ -11,7 +11,7 @@
 | **2** | M 模式固件（SBI 提供者：OpenSBI） | ✅ `01-boot-chain/01-opensbi/` |
 | **3** | 二级 loader（U-Boot，S 模式；含磁盘启动与 A/B OTA） | ✅ `01-boot-chain/03-uboot-s/`、`02-uboot-ota/` |
 | **4** | 内核加载协议（Image 头 / booti / FIT / QEMU -kernel） | ✅ `01-boot-chain/05-kernel/` |
-| **5** | 应用层 init（initramfs / rootfs，内核初始化 → PID1） | 🚧 `01-boot-chain/06-init/` |
+| **5** | 应用层 init（initramfs / rootfs，内核初始化 → PID1） | ✅ `01-boot-chain/06-init/` |
 
 ## 第一阶段做什么
 
@@ -76,6 +76,17 @@ S 模式二级 loader，本仓库用 **U-Boot v2025.10**：
 - initramfs 的 `/init`：挂载 proc/sys/dev → 打印 banner → `exec /bin/sh`；
 - rootfs（A/B 分区）里的 BusyBox init：`/etc/inittab → /etc/init.d/rcS → shell`，含槽位确认与 OTA agent。
 
+## 主题实验：内存与进程（M3/M4）
+
+| 主题 | 内容 | 位置 |
+|---|---|---|
+| **M3 内存管理** | memblock → 页表 walk（Sv57）→ buddy → SLUB → `slub_debug` 红区检测 | `lab/` |
+| **M4 进程管理** | `task_struct` 遍历（init_task/PID1/kthreadd）、fork/exec/wait、调度 tracepoint、COW | `lab/` |
+
+`lab/` 是共享实验框架：一个 BusyBox initramfs + 内核模块 + 静态测试程序，按内核 cmdline
+`lab.mode=<mode>` 分发到不同实验脚本。模式：`meminit` / `pgwalk` / `buddy` / `slab` /
+`slubdebug` / `proc`。
+
 ## 环境要求
 
 - Linux / WSL2 Ubuntu（**推荐 WSL2**）
@@ -126,6 +137,16 @@ bash 01-boot-chain/05-kernel/gdb-kernel-entry.sh  # 可选：看内核入口 a0/
 # ===== 第三阶段（磁盘 + A/B OTA）=====
 export COMPRESSION=none                      # 本实验 U-Boot 下 gzip FIT 会挂起
 bash 02-uboot-ota/test-ota.sh                # 四个 OTA 场景（正常/坏包/回滚/FIT 哈希回退）
+
+# ===== M3/M4：内存与进程实验 =====
+bash lab/build-lab.sh
+bash lab/mk-lab-initramfs.sh
+LAB_MODE=meminit LAB_EXTRA="memblock=debug" bash lab/run-lab.sh
+LAB_MODE=pgwalk bash lab/run-lab.sh
+LAB_MODE=buddy bash lab/run-lab.sh
+LAB_MODE=slab bash lab/run-lab.sh
+LAB_MODE=slubdebug LAB_EXTRA="slub_debug=FZ" bash lab/run-lab.sh
+LAB_MODE=proc bash lab/run-lab.sh
 ```
 
 > 如果所在网络访问 GitHub 受限（例如 WSL 内直连被墙），可以用 gh-proxy 镜像克隆：
@@ -162,6 +183,19 @@ Starting kernel ...
   pid=1  cmdline: console=ttyS0 earlycon keep_bootcon
 ```
 
+### 预期输出（M4 进程管理关键行）
+
+```
+task_walk: init_task=ffffffff8160d000 init_task.pid=0
+task_walk: [ 0] pid=1 comm=init     mm=ff60000003070000     ← PID 1 有 mm
+task_walk: [ 1] pid=2 comm=kthreadd mm=0000000000000000     ← 内核线程无 mm
+[fork_exec] parent pid=63 ppid=59
+[fork_exec] child  pid=64 ppid=63 (after fork)
+[fork_exec] exec /bin/echo OK
+[cow_test] child pid=69 writes p[0]='B' (triggers COW)
+[cow_test] parent after child exit: p[0]=A (child's write must not leak)
+```
+
 ## 目录结构
 
 ```
@@ -176,6 +210,7 @@ riscvLab/
 │  ├─ 05-kernel/                第四阶段：内核构建、启动与入口观察
 │  └─ 06-init/                  第五阶段：initramfs /init
 ├─ 02-uboot-ota/                磁盘启动 + A/B OTA（分区/槽位/回滚/env 持久化）
+├─ lab/                         M3 内存管理 + M4 进程管理实验（模块/测试/overlay）
 └─ scripts/
    ├─ common.sh                 公共路径/版本变量
    ├─ fetch-opensbi.sh          下载 OpenSBI v1.7
@@ -185,6 +220,6 @@ riscvLab/
 ## 说明
 
 - 所有实验都在 QEMU `-M virt` 上完成，不依赖真实硬件。
-- 本仓库是完整学习实验（启动链 / 分区 OTA / 内存 / 进程）的**第一 ~ 五阶段**摘录，后续深入实验会继续上传。
+- 本仓库是完整学习实验（启动链 / 分区 OTA / 内存 / 进程）的摘录：**第一 ~ 五阶段 + `lab/` 内存/进程实验**，后续深入实验会继续上传。
 - 脚本默认把源码放在 `~/riscv-lab/src`、构建产物放在 `~/riscv-lab/build`，可用 `BUILD_ROOT` 环境变量改到其他目录。
 - 已知限制：本实验 U-Boot 配置下 FAT 中的 gzip 压缩 FIT 会在解压阶段挂起，OTA 实验统一使用 `COMPRESSION=none`。
