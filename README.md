@@ -73,6 +73,9 @@ bash 01-boot-chain/00-rom/run-stage0.sh
 bash 01-boot-chain/00-rom/gdb-stage0.sh
 ```
 
+> 如果所在网络访问 GitHub 受限（例如 WSL 内直连被墙），可以用 gh-proxy 镜像克隆：
+> `git clone https://gh-proxy.com/https://github.com/bugego15/riscvLab.git`
+
 ### 预期输出（关键行）
 
 ```
