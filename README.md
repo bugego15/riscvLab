@@ -1,7 +1,7 @@
 # riscvLab — RISC-V 启动流程学习实验
 
-在 QEMU `-M virt` 上学习 RISC-V 启动流程的代码仓库。按"五阶段启动链"组织，当前已上传 **第一、二、三阶段**
-（含 U-Boot 磁盘启动与 A/B OTA 回滚）。
+在 QEMU `-M virt` 上学习 RISC-V 启动流程的代码仓库。按"五阶段启动链"组织，当前已上传
+**第一 ~ 四阶段**，第五阶段（应用层 init）已开始（initramfs `/init` 已跑通）。
 
 ## 五阶段启动链
 
@@ -10,8 +10,8 @@
 | **1** | 复位后第一段代码（真机 BootROM / 自写 stage0） | ✅ `01-boot-chain/00-rom/` |
 | **2** | M 模式固件（SBI 提供者：OpenSBI） | ✅ `01-boot-chain/01-opensbi/` |
 | **3** | 二级 loader（U-Boot，S 模式；含磁盘启动与 A/B OTA） | ✅ `01-boot-chain/03-uboot-s/`、`02-uboot-ota/` |
-| 4 | 内核加载协议（booti / FIT / QEMU -kernel） | 后续（`05-kernel/` 已放内核构建脚本） |
-| 5 | 应用层 init（initramfs / rootfs） | 后续 |
+| **4** | 内核加载协议（Image 头 / booti / FIT / QEMU -kernel） | ✅ `01-boot-chain/05-kernel/` |
+| **5** | 应用层 init（initramfs / rootfs，内核初始化 → PID1） | 🚧 `01-boot-chain/06-init/` |
 
 ## 第一阶段做什么
 
@@ -27,33 +27,54 @@ QEMU `virt` 复位后 `PC = 0x1000`，执行 6 条复位向量指令，然后跳
   jr    t0               # 跳到 0x80000000
 ```
 
-真机上这个位置是 **BootROM**；QEMU 上只是"取 hartid/DTB/入口并跳转"的最小桩。
-本仓库用两段自写代码补出"扩展版第一阶段"：
-
-1. **`stage0.S` + `stage0.c`（M 模式）**：建栈、保存 a0/a1、轮询 16550 UART 打印、校验 DTB magic，然后把 hartid/DTB 原样传给 OpenSBI 并跳转；
-2. **`stage1.S` + `stage1.c`（S 模式）**：通过 SBI `ecall` 打印 SBI 规范版本/实现版本，证明 OpenSBI 已经就位。
+自写 stage0（M 模式）建栈、打印、校验 DTB magic 后把 hartid/DTB 交给 OpenSBI；
+自写 stage1（S 模式）通过 SBI `ecall` 打印 SBI 版本，证明 OpenSBI 就位。
 
 ## 第二阶段做什么
 
-第二阶段是 **0x80000000 处的 M 模式固件（SBI 提供者）**，本仓库用 **OpenSBI v1.7**：
+0x80000000 处的 **M 模式固件（SBI 提供者）**，本仓库用 **OpenSBI v1.7**：
 
 - 保存启动参数（hartid / DTB / fw_dynamic_info）；
 - 自身初始化（scratch、栈、heap、BSS、重定位）；
-- 平台发现（解析 DTB，识别 `riscv-virtio,qemu`）；
+- 平台发现（DTB，识别 `riscv-virtio,qemu`）；
 - 最小平台设施：UART console、定时器、IPI、复位/关机、PMU；
-- **PMP/Domain 隔离** 与中断/异常委托；
-- 建立 **SBI 运行时**（trap handler + TIME/IPI/RFENCE/HSM/SRST/DBCN… 扩展）；
-- 确定下一级地址/模式，执行 `mret` 从 M 切到 S（`mstatus.MPP=S`、`mepc=next_addr`）。
+- PMP/Domain 隔离与中断/异常委托；
+- 建立 SBI 运行时（trap handler + TIME/IPI/RFENCE/HSM/SRST/DBCN…）；
+- 设置 `mstatus.MPP=S`、`mepc=next_addr`，`mret` 切到 S 模式。
 
 ## 第三阶段做什么
 
-第三阶段是 **S 模式运行的二级 loader**，本仓库用 **U-Boot v2025.10**：
+S 模式二级 loader，本仓库用 **U-Boot v2025.10**：
 
-- 接管 OpenSBI 的交接参数（a0=hartid, a1=DTB），设置自己的异常入口；
-- **自身重定位**：从 0x80200000 搬到 RAM 高地址（本实验 `relocaddr=0x9f6ce000`），给内核腾空间；
-- 重定位前/后初始化：FDT 解析、早期 malloc、内存预留、驱动模型（DM）、console、存储（virtio/mmc/flash）、env；
-- **磁盘启动**：从 FAT boot 分区加载 `boot.scr`，执行脚本决定加载哪个槽的 FIT；
-- **A/B OTA**：`slot/upgrade_available/bootcount/bootlimit` 状态机、FIT sha256 校验、bootcount 超限自动回滚、env/状态持久化。
+- 接管 OpenSBI 的 `a0=hartid, a1=DTB`，设置异常入口；
+- 自身重定位（0x80200000 → RAM 高地址 0x9f6ce000），给内核腾空间；
+- FDT 解析、早期 malloc、内存预留、驱动模型（DM）、console、存储（virtio/flash）、env；
+- 磁盘启动：FAT boot 分区加载 `boot.scr`，按脚本加载槽位 FIT；
+- A/B OTA：`slot/upgrade_available/bootcount/bootlimit` 状态机、FIT sha256 校验、
+  bootcount 超限自动回滚、env/状态持久化。
+
+## 第四阶段做什么
+
+**内核加载协议**（loader ↔ kernel 的 ABI），不是独立代码阶段：
+
+| 约定 | 本实验值 |
+|---|---|
+| 镜像头 64B：`text_offset` | `0x200000`（2 MiB） |
+| 放置地址 | `0x80000000 + 0x200000 = 0x80200000` |
+| 入口 | Image 偏移 0：`c.li s4,-13; j _start_kernel`（`_start_kernel = 0xffffffff800010d8`） |
+| 寄存器/模式 | `a0=hartid, a1=DTB`；S 模式；MMU 关闭 |
+| 校验字段 | `magic2 = 0x05435352`（"RSC\x05"，ARM64 兼容位置） |
+
+三种实现路径：U-Boot `booti`（按 `ram_base+text_offset` 搬移）、U-Boot `bootm`/FIT
+（`load=0x80200000`+hash 校验）、QEMU `-kernel`（直接加载到 0x80200000）。
+
+## 第五阶段做什么（已开始）
+
+内核初始化完成后启动 **PID 1**：
+
+- `start_kernel() → rest_init() → kernel_init → run_init_process("/init")`；
+- initramfs 的 `/init`：挂载 proc/sys/dev → 打印 banner → `exec /bin/sh`；
+- rootfs（A/B 分区）里的 BusyBox init：`/etc/inittab → /etc/init.d/rcS → shell`，含槽位确认与 OTA agent。
 
 ## 环境要求
 
@@ -90,14 +111,19 @@ bash 01-boot-chain/01-opensbi/build-payload.sh
 bash 01-boot-chain/01-opensbi/run-opensbi.sh
 bash 01-boot-chain/01-opensbi/gdb-handoff.sh # 可选：看 M→S 交接时刻
 
-# ===== 第三阶段：U-Boot（S 模式）=====
+# ===== 第三阶段：U-Boot（S 模式）+ A/B OTA =====
 bash 01-boot-chain/03-uboot-s/build-uboot-s.sh
 bash 01-boot-chain/03-uboot-s/run-uboot-s.sh
 bash 01-boot-chain/03-uboot-s/gdb-reloc.sh   # 可选：看 U-Boot 入口与重定位
 
+# ===== 第四阶段：内核加载协议 =====
+bash 00-env/build-busybox.sh
+bash 01-boot-chain/06-init/mk-initramfs.sh
+bash 01-boot-chain/05-kernel/build-kernel.sh   # 首次编译较慢
+bash 01-boot-chain/05-kernel/run-kernel-initramfs.sh
+bash 01-boot-chain/05-kernel/gdb-kernel-entry.sh  # 可选：看内核入口 a0/a1
+
 # ===== 第三阶段（磁盘 + A/B OTA）=====
-bash 00-env/build-busybox.sh                 # rootfs 需要 BusyBox 安装树
-bash 01-boot-chain/05-kernel/build-kernel.sh # 首次编译较慢；生成 Image 供 FIT 使用
 export COMPRESSION=none                      # 本实验 U-Boot 下 gzip FIT 会挂起
 bash 02-uboot-ota/test-ota.sh                # 四个 OTA 场景（正常/坏包/回滚/FIT 哈希回退）
 ```
@@ -114,7 +140,6 @@ bash 02-uboot-ota/test-ota.sh                # 四个 OTA 场景（正常/坏包
 [stage0] handoff -> OpenSBI fw_jump @0x80200000
 OpenSBI v1.7
 Firmware Base               : 0x80200000
-Domain0 Next Address        : 0x0000000080400000
 [stage1] SBI spec version = 0x0000000003000000
 ```
 
@@ -122,27 +147,19 @@ Domain0 Next Address        : 0x0000000080400000
 
 ```
 U-Boot 2025.10
-Model: riscv-virtio,qemu
 DRAM:  512 MiB
 Core:  27 devices, 14 uclasses, devicetree: board
-Flash: 32 MiB
-## Executing script at 8e000000
 Moving Image from 0x84000000 to 0x80200000
 Starting kernel ...
-[    0.000000] Kernel command line: console=ttyS0 earlycon
 [    1.431584] Run /init as init process
 ```
 
-### A/B OTA 回滚预期日志
+### 预期输出（第五阶段：用户态 init）
 
 ```
-[boot.scr] pending upgrade attempt: bootcount=1/3 slot=b
-LAB BOOT FAIL: slot b is intentionally broken
-...
-[boot.scr] pending upgrade attempt: bootcount=4/3 slot=b
-[boot.scr] !!! ROLLBACK -> slot a (too many failed boots)
-[boot.scr] >>> booting slot A: slot_a.itb, root=/dev/vda2
-LAB BOOT OK: slot a
+[    0.000000] Run /init as init process
+  RISC-V initramfs: userspace init (/init) 已运行
+  pid=1  cmdline: console=ttyS0 earlycon keep_bootcon
 ```
 
 ## 目录结构
@@ -151,18 +168,14 @@ LAB BOOT OK: slot a
 riscvLab/
 ├─ README.md
 ├─ 00-env/
-│  └─ build-busybox.sh          构建 static BusyBox（rootfs 用）
+│  └─ build-busybox.sh          构建 static BusyBox（initramfs/rootfs 用）
 ├─ 01-boot-chain/
 │  ├─ 00-rom/                   第一阶段：复位后的第一段代码
 │  ├─ 01-opensbi/               第二阶段：M 模式固件 OpenSBI
 │  ├─ 03-uboot-s/               第三阶段：S 模式 U-Boot（构建/运行/GDB 重定位观察）
-│  └─ 05-kernel/                内核构建脚本（booti/FIT 实验的前置产物）
+│  ├─ 05-kernel/                第四阶段：内核构建、启动与入口观察
+│  └─ 06-init/                  第五阶段：initramfs /init
 ├─ 02-uboot-ota/                磁盘启动 + A/B OTA（分区/槽位/回滚/env 持久化）
-│  ├─ boot-ab.cmd boot.cmd      启动脚本源文件
-│  ├─ mk-ab-disk.sh mk-fit.sh   生成 A/B 磁盘、FIT 镜像
-│  ├─ mk-rootfs.sh ota-agent.sh rootfs 与用户态 OTA agent
-│  ├─ run-ab-boot.sh            连续上电测试（bootcount 回滚）
-│  └─ test-ota.sh test-env.sh   四场景测试、env 持久化验证
 └─ scripts/
    ├─ common.sh                 公共路径/版本变量
    ├─ fetch-opensbi.sh          下载 OpenSBI v1.7
@@ -172,6 +185,6 @@ riscvLab/
 ## 说明
 
 - 所有实验都在 QEMU `-M virt` 上完成，不依赖真实硬件。
-- 本仓库是完整学习实验（启动链 / 分区 OTA / 内存 / 进程）的**第一、二、三阶段摘录**，后续阶段会陆续上传。
+- 本仓库是完整学习实验（启动链 / 分区 OTA / 内存 / 进程）的**第一 ~ 五阶段**摘录，后续深入实验会继续上传。
 - 脚本默认把源码放在 `~/riscv-lab/src`、构建产物放在 `~/riscv-lab/build`，可用 `BUILD_ROOT` 环境变量改到其他目录。
 - 已知限制：本实验 U-Boot 配置下 FAT 中的 gzip 压缩 FIT 会在解压阶段挂起，OTA 实验统一使用 `COMPRESSION=none`。
